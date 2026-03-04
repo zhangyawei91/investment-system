@@ -218,6 +218,40 @@ class SmartMoneyFetcher:
         
         return {"source": "降级(无数据)", "data": {}, "error": "数据源无法访问"}
     
+    def get_top_list(self):
+        """获取今日龙虎榜热门股票"""
+        cache_key = "toplist"
+        cached = self._get_cache(cache_key)
+        if cached:
+            return cached
+        
+        try:
+            trade_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+            data = {
+                "api_name": "top_list",
+                "token": TUSHARE_TOKEN,
+                "params": {"trade_date": trade_date}
+            }
+            resp = requests.post(TUSHARE_API, json=data, timeout=self.timeout)
+            result = resp.json()
+            if result.get("code") == 0 and result.get("data", {}).get("items"):
+                items = result["data"]["items"]
+                top_stocks = []
+                for item in items[:8]:  # 取前8只
+                    # [trade_date, ts_code, name, close, pct_change, turnover, amount, pe, pb]
+                    top_stocks.append({
+                        "name": item[2],
+                        "close": item[3],
+                        "change": item[4],
+                        "amount": item[6] / 100000000  # 转换为亿
+                    })
+                formatted = {"source": "Tushare", "data": top_stocks}
+                self._set_cache(cache_key, formatted)
+                return formatted
+        except Exception as e:
+            print(f"龙虎榜获取失败: {e}")
+        return {"source": "降级(无数据)", "data": [], "error": "数据源无法访问"}
+    
     def get_sector_flow(self):
         """获取板块资金流向"""
         cache_key = "sector"
@@ -307,7 +341,27 @@ def analyze_smart_money():
         analysis["主力资金"]["detail"] = main_data.get("error", "获取失败")
     
     # 板块资金分析（暂时跳过，因为东方财富不可用）
-    analysis["板块资金"] = {"signal": "neutral", "detail": "数据源不可用", "source": "待修复"}
+    # 改用龙虎榜数据
+    toplist_data = fetcher.get_top_list()
+    analysis["板块资金"] = {"signal": "neutral", "detail": "数据源不可用", "source": "待修复"}  # 保留原位置
+    
+    # 替换为龙虎榜数据（新字段）
+    analysis["龙虎榜"] = {"signal": "neutral", "detail": "数据获取中...", "source": ""}
+    if toplist_data.get("data"):
+        try:
+            data = toplist_data["data"]
+            if data and len(data) > 0:
+                # 获取涨幅最大的热门股
+                hot_stocks = [f"{s['name']}({s['change']:+.1f}%)" for s in data[:5]]
+                analysis["龙虎榜"] = {
+                    "signal": "bullish" if data[0]["change"] > 0 else "neutral",
+                    "detail": f"热门: {', '.join(hot_stocks)}",
+                    "source": toplist_data.get("source", "")
+                }
+        except Exception as e:
+            analysis["龙虎榜"]["detail"] = "数据解析异常"
+    else:
+        analysis["龙虎榜"]["detail"] = toplist_data.get("error", "获取失败")
     
     # 杠杆资金（融资融券）分析
     margin_data = fetcher.get_margin_data()
