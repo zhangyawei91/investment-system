@@ -64,15 +64,45 @@ class ReportBuilder:
         return report
     
     def build_news_section(self) -> str:
-        """模块2: 消息面分析"""
+        """模块2: 消息面分析（带分类）"""
         report = "📰 消息面分析\n"
         report += "-" * 30 + "\n"
         
+        # 分类配置
+        categories = {
+            '🌍 国际': ['美国', '欧洲', '英国', '日本', '韩国', '中东', '俄乌', '美联储', '关税', '伊朗', '以军'],
+            '🏦 金融政策': ['央行', '降息', '加息', '存款准备金', '利率', '金融', '银行', '保险', '外汇'],
+            '🏭 产业政策': ['政策', '证监会', '财政部', '国务院', '监管', '新能源', 'AI', '芯片', '汽车'],
+            '🛢️ 大宗商品': ['原油', '黄金', '石油', '天然气', '期货', '铜', '铝'],
+            '🏠 地产基建': ['房地产', '地产', '楼市', '建筑', '基建', '水泥'],
+            '💻 科技': ['华为', '芯片', 'AI', '互联网', '软件', '5G', '6G', '激光雷达'],
+            '🏥 医药': ['医药', '医疗', '疫苗', '生物', '中药', '器械'],
+        }
+        
         try:
-            news = get_financial_news(6)
+            news = get_financial_news(8)
             if news:
+                # 按分类整理
+                categorized = {cat: [] for cat in categories.keys()}
+                categorized['📋 其他'] = []
+                
                 for n in news:
-                    report += f"• {n['time'][5:16]} {n['title']}\n"
+                    title = n['title']
+                    assigned = False
+                    for cat, keywords in categories.items():
+                        if any(k in title for k in keywords):
+                            categorized[cat].append(n)
+                            assigned = True
+                            break
+                    if not assigned:
+                        categorized['📋 其他'].append(n)
+                
+                # 输出分类新闻
+                for cat, items in categorized.items():
+                    if items:
+                        report += f"\n{cat}\n"
+                        for n in items[:3]:  # 每类最多3条
+                            report += f"  • {n['time'][5:16]} {n['title'][:40]}\n"
             else:
                 report += "暂无重要新闻\n"
         except Exception as e:
@@ -126,10 +156,49 @@ class ReportBuilder:
         report = "📊 个股分析\n"
         report += "-" * 30 + "\n"
         
-        # 这里可以接入持仓股数据
-        report += "⚠️ 持仓数据待接入\n"
+        try:
+            # 读取持仓数据
+            holdings_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "holdings.json")
+            if os.path.exists(holdings_file):
+                import json
+                with open(holdings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                all_stocks = []
+                total_pnl = 0
+                
+                for account, stocks in data.get("accounts", {}).items():
+                    report += f"\n{account}:\n"
+                    for s in stocks:
+                        shares = s["shares"]
+                        cost = s["cost"]
+                        current = s.get("current", cost)
+                        pnl = (current - cost) * shares
+                        pnl_pct = (current - cost) / cost * 100
+                        total_pnl += pnl
+                        
+                        emoji = "🟢" if pnl > 0 else "🔴"
+                        report += f"  {emoji} {s['name']}: {shares}股, 成本{cost:.2f}, 当前{current:.2f}, {pnl:+.0f}({pnl_pct:+.1f}%)\n"
+                        all_stocks.append({"name": s["name"], "pnl_pct": pnl_pct})
+                
+                # 总结
+                report += f"\n  总浮动盈亏: {total_pnl:+.0f}元\n"
+                
+                # 涨跌幅排行
+                if all_stocks:
+                    sorted_stocks = sorted(all_stocks, key=lambda x: x["pnl_pct"], reverse=True)
+                    best = sorted_stocks[0]
+                    worst = sorted_stocks[-1]
+                    report += f"  最佳: {best['name']} ({best['pnl_pct']:+.1f}%)\n"
+                    report += f"  最差: {worst['name']} ({worst['pnl_pct']:+.1f}%)\n"
+            else:
+                report += "⚠️ 持仓数据文件不存在\n"
+                
+        except Exception as e:
+            report += f"持仓数据读取失败: {e}\n"
+        
         report += "\n"
-        self.modules["个股分析"] = "⏳"
+        self.modules["个股分析"] = "✅"
         return report
     
     def build_advice(self) -> str:
