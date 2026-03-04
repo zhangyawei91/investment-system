@@ -165,13 +165,51 @@ class SmartMoneyFetcher:
             print(f"东方财富融资融券失败: {e}")
         return None, None
     
+    def get_margin_data_v2(self):
+        """Tushare融资融券汇总API"""
+        try:
+            # 使用昨天或前一个交易日的日期
+            trade_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+            data = {
+                "api_name": "margin",
+                "token": TUSHARE_TOKEN,
+                "params": {"trade_date": trade_date}
+            }
+            resp = requests.post(TUSHARE_API, json=data, timeout=self.timeout)
+            result = resp.json()
+            if result.get("code") == 0 and result.get("data", {}).get("items"):
+                items = result["data"]["items"]
+                total_rzye = 0  # 融资余额
+                total_rzmre = 0  # 融资买入额
+                for item in items:
+                    # [trade_date, exchange, rzye, rzmre, rzche, rqye, rqmcl, rzrqye, rqyl]
+                    if item[1] in ["SSE", "SZSE"]:  # 只统计沪市和深市
+                        total_rzye += item[2]
+                        total_rzmre += item[3]
+                
+                # 转换为亿元 (原始数据是元，除以1亿)
+                total_rzye = total_rzye / 100000000
+                total_rzmre = total_rzmre / 100000000
+                return [{"total_rzye": total_rzye, "total_rzmre": total_rzmre}], "Tushare"
+        except Exception as e:
+            print(f"Tushare融资融券失败: {e}")
+        return None, None
+    
     def get_margin_data(self):
-        """获取融资融券数据"""
+        """获取融资融券数据 - 多源自动切换"""
         cache_key = "margin"
         cached = self._get_cache(cache_key)
         if cached:
             return cached
         
+        # 优先用Tushare
+        result, source_name = self.get_margin_data_v2()
+        if result:
+            formatted = {"source": source_name, "data": result}
+            self._set_cache(cache_key, formatted)
+            return formatted
+        
+        # 备用东方财富
         result, source_name = self.get_margin_data_v1()
         if result:
             formatted = {"source": source_name, "data": result}
@@ -268,23 +306,31 @@ def analyze_smart_money():
     else:
         analysis["主力资金"]["detail"] = main_data.get("error", "获取失败")
     
-    # 板块资金分析
-    sector_data = fetcher.get_sector_flow()
-    analysis["板块资金"]["source"] = sector_data.get("source", "未知")
-    if sector_data.get("data"):
+    # 板块资金分析（暂时跳过，因为东方财富不可用）
+    analysis["板块资金"] = {"signal": "neutral", "detail": "数据源不可用", "source": "待修复"}
+    
+    # 杠杆资金（融资融券）分析
+    margin_data = fetcher.get_margin_data()
+    analysis["杠杆资金"]["source"] = margin_data.get("source", "未知")
+    if margin_data.get("data"):
         try:
-            data = sector_data["data"]
+            data = margin_data["data"]
             if data and len(data) > 0:
-                # 获取资金流入最多的板块
-                top_sectors = [s["name"] for s in data[:3] if s.get("change", 0) > 0]
-                if top_sectors:
-                    analysis["板块资金"] = {"signal": "bullish", "detail": f"资金流入: {', '.join(top_sectors)}", "source": sector_data.get("source", "")}
-                else:
-                    analysis["板块资金"] = {"signal": "neutral", "detail": "板块涨跌分化", "source": sector_data.get("source", "")}
-        except:
-            analysis["板块资金"]["detail"] = "数据解析异常"
+                item = data[0]
+                rzye = item.get("total_rzye", 0)  # 融资余额(亿元)
+                rzmre = item.get("total_rzmre", 0)  # 融资买入额(亿元)
+                if rzye > 0:
+                    signal = "bullish" if rzmre > 10000 else "neutral"
+                    analysis["杠杆资金"] = {
+                        "signal": signal,
+                        "detail": f"融资余额{rzye:.0f}亿, 今日买入{rzmre:.0f}亿",
+                        "source": margin_data.get("source", "")
+                    }
+        except Exception as e:
+            print(f"融资融券解析错误: {e}")
+            analysis["杠杆资金"]["detail"] = "数据解析异常"
     else:
-        analysis["板块资金"]["detail"] = sector_data.get("error", "获取失败")
+        analysis["杠杆资金"]["detail"] = margin_data.get("error", "获取失败")
     
     return analysis
 
