@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from scripts.data_fetcher import get_index_quote, get_etf_quote
 from scripts.smart_money import analyze_smart_money
 from scripts.news_fetcher import get_financial_news
+from scripts.technical_analysis import TechnicalAnalyzer
 
 
 class ReportBuilder:
@@ -33,6 +34,7 @@ class ReportBuilder:
         report += self.build_market_overview()
         report += self.build_news_section()
         report += self.build_fund_flow()
+        report += self.build_technical_analysis()
         report += self.build_sector_analysis()
         report += self.build_stock_analysis()
         report += self.build_advice()
@@ -141,8 +143,47 @@ class ReportBuilder:
         self.modules["资金流向"] = "✅"
         return report
     
+    def build_technical_analysis(self) -> str:
+        """模块4: 技术分析"""
+        report = "📈 技术分析\n"
+        report += "-" * 30 + "\n"
+        
+        try:
+            analyzer = TechnicalAnalyzer()
+            
+            # 分析几只重点股票
+            stocks_to_analyze = [
+                ("紫金矿业", "601899.SH"),
+                ("歌尔股份", "002241.SZ"),
+                ("四川长虹", "600839.SH")
+            ]
+            
+            for name, ts_code in stocks_to_analyze:
+                result = analyzer.analyze_stock(name, ts_code)
+                if result:
+                    trend_emoji = "🟢" if "上涨" in result['trend'] else "🔴" if "下跌" in result['trend'] else "⚪"
+                    report += f"{trend_emoji} {name}: {result['current_price']:.2f}\n"
+                    report += f"   趋势: {result['trend']}\n"
+                    if result['ma']:
+                        ma5 = result['ma'].get('MA5', 0)
+                        ma20 = result['ma'].get('MA20', 0)
+                        report += f"   MA5/MA20: {ma5:.2f}/{ma20:.2f}\n"
+                    if result['rsi']:
+                        report += f"   RSI: {result['rsi']['RSI']} ({result['rsi']['status']})\n"
+                    if result['macd']:
+                        report += f"   MACD: {result['macd']['signal']}\n"
+                    report += "\n"
+                else:
+                    report += f"⚪ {name}: 数据获取失败\n\n"
+                    
+        except Exception as e:
+            report += f"技术分析获取失败: {e}\n"
+        
+        self.modules["技术分析"] = "✅"
+        return report
+    
     def build_sector_analysis(self) -> str:
-        """模块4: 行业板块"""
+        """模块5: 行业板块"""
         report = "🏭 行业板块\n"
         report += "-" * 30 + "\n"
         report += "⚠️ 行业板块数据暂不可用（东方财富API网络不通）\n"
