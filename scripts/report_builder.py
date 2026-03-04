@@ -157,42 +157,71 @@ class ReportBuilder:
         report += "-" * 30 + "\n"
         
         try:
-            # 读取持仓数据
-            holdings_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "holdings.json")
-            if os.path.exists(holdings_file):
-                import json
-                with open(holdings_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                
-                all_stocks = []
-                total_pnl = 0
-                
-                for account, stocks in data.get("accounts", {}).items():
-                    report += f"\n{account}:\n"
-                    for s in stocks:
-                        shares = s["shares"]
-                        cost = s["cost"]
-                        current = s.get("current", cost)
-                        pnl = (current - cost) * shares
-                        pnl_pct = (current - cost) / cost * 100
-                        total_pnl += pnl
+            # 读取持仓数据（支持多个账户）
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+            holdings_files = [
+                os.path.join(data_dir, "holdings.json"),
+                os.path.join(data_dir, "holdings_zhongxin.json")
+            ]
+            all_stocks = []
+            total_pnl = 0
+            found_data = False
+            
+            for holdings_file in holdings_files:
+                if os.path.exists(holdings_file):
+                    found_data = True
+                    import json
+                    with open(holdings_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    
+                    # 判断数据结构
+                    if "broker" in data:
+                        # 单账户格式（中信建投）
+                        broker = data.get("broker", "未知券商")
+                        report += f"\n{broker}:\n"
+                        report += f"  总资产: {data.get('total_assets', 0):,.2f}元\n"
+                        report += f"  总市值: {data.get('market_value', 0):,.2f}元\n"
+                        report += f"  仓位: {data.get('position_ratio', 0)}%\n"
                         
-                        emoji = "🟢" if pnl > 0 else "🔴"
-                        report += f"  {emoji} {s['name']}: {shares}股, 成本{cost:.2f}, 当前{current:.2f}, {pnl:+.0f}({pnl_pct:+.1f}%)\n"
-                        all_stocks.append({"name": s["name"], "pnl_pct": pnl_pct})
-                
+                        for s in data.get("stocks", []):
+                            shares = s["shares"]
+                            cost = s["cost"]
+                            current = s.get("current", cost)
+                            pnl = s.get("pnl", (current - cost) * shares)
+                            pnl_pct = s.get("pnl_pct", (current - cost) / cost * 100 if cost > 0 else 0)
+                            total_pnl += pnl
+                            
+                            emoji = "🟢" if pnl > 0 else "🔴"
+                            report += f"  {emoji} {s['name']}: {shares}股, 成本{cost:.3f}, 现价{current:.3f}, {pnl:+.0f}({pnl_pct:+.1f}%)\n"
+                            all_stocks.append({"name": s["name"], "pnl_pct": pnl_pct})
+                    elif "accounts" in data:
+                        # 多账户格式
+                        for account, stocks in data.get("accounts", {}).items():
+                            report += f"\n{account}:\n"
+                            for s in stocks:
+                                shares = s["shares"]
+                                cost = s["cost"]
+                                current = s.get("current", cost)
+                                pnl = (current - cost) * shares
+                                pnl_pct = (current - cost) / cost * 100 if cost > 0 else 0
+                                total_pnl += pnl
+                                
+                                emoji = "🟢" if pnl > 0 else "🔴"
+                                report += f"  {emoji} {s['name']}: {shares}股, 成本{cost:.2f}, 当前{current:.2f}, {pnl:+.0f}({pnl_pct:+.1f}%)\n"
+                                all_stocks.append({"name": s["name"], "pnl_pct": pnl_pct})
+            
+            if not found_data:
+                report += "⚠️ 持仓数据文件不存在\n"
+            elif all_stocks:
                 # 总结
                 report += f"\n  总浮动盈亏: {total_pnl:+.0f}元\n"
                 
                 # 涨跌幅排行
-                if all_stocks:
-                    sorted_stocks = sorted(all_stocks, key=lambda x: x["pnl_pct"], reverse=True)
-                    best = sorted_stocks[0]
-                    worst = sorted_stocks[-1]
-                    report += f"  最佳: {best['name']} ({best['pnl_pct']:+.1f}%)\n"
-                    report += f"  最差: {worst['name']} ({worst['pnl_pct']:+.1f}%)\n"
-            else:
-                report += "⚠️ 持仓数据文件不存在\n"
+                sorted_stocks = sorted(all_stocks, key=lambda x: x["pnl_pct"], reverse=True)
+                best = sorted_stocks[0]
+                worst = sorted_stocks[-1]
+                report += f"  最佳: {best['name']} ({best['pnl_pct']:+.1f}%)\n"
+                report += f"  最差: {worst['name']} ({worst['pnl_pct']:+.1f}%)\n"
                 
         except Exception as e:
             report += f"持仓数据读取失败: {e}\n"
